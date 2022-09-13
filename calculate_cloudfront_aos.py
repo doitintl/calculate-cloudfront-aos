@@ -51,9 +51,9 @@ if __name__ == '__main__':
     except botocore.exceptions.ClientError as error:
         if error.response['Error']['Code'] == 'AccessDeniedException':
             print(error.response['Error']['Message'])
-            exit(1)
         else:
             raise error
+        exit(1)
 
     data_transfer_in_kb = []
     requests = []
