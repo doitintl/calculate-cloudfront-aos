@@ -3,6 +3,8 @@ import argparse
 import botocore
 import boto3
 import json
+import os
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Calculate Amazon CloudFront AOS using Cost Explorer API.')
@@ -17,18 +19,29 @@ if __name__ == '__main__':
     month = int(args.month) if args.month else today.month
     year = int(args.year) if args.year else today.year
     profile = args.profile if args.profile else 'default'
+    # If the script runs in AWS CloudShell, ignore the AWS CLI profile
+    if 'AWS_CONTAINER_CREDENTIALS_FULL_URI' in os.environ:
+        profile = 'CLOUDSHELL_PROFILE'
+
     output_format = args.output if args.output else 'text'
 
     first_day_of_month = datetime.datetime(year, month, 1).date()
     current_day_of_month = datetime.datetime(year, month, today.day).date()
+
     # Cost Explorer API TimePeriod end date is exclusive, adding 1 more day to end date
     end_date = (first_day_of_month.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+
     if month == today.month:
         end_date = today.date() + datetime.timedelta(days=1)
+
     first_day_of_month = str(first_day_of_month)
     end_date = str(end_date)
+
     try:
-        session = boto3.session.Session(profile_name=profile)
+        if profile == 'CLOUDSHELL_PROFILE':
+            session = boto3.session.Session()
+        else:
+            session = boto3.session.Session(profile_name=profile)
         client = session.client('ce', region_name='us-east-1')
 
         output = client.get_cost_and_usage(TimePeriod={'Start': first_day_of_month, 'End': end_date},
@@ -36,8 +49,12 @@ if __name__ == '__main__':
                                            GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}], Filter={'Dimensions':
                                             {'Key': 'SERVICE', 'Values': ['Amazon CloudFront']}})
     except botocore.exceptions.ClientError as error:
-        raise error
-    #print(output)
+        if error.response['Error']['Code'] == 'AccessDeniedException':
+            print(error.response['Error']['Message'])
+            exit(1)
+        else:
+            raise error
+
     data_transfer_in_kb = []
     requests = []
     for k in output['ResultsByTime'][0]['Groups']:
@@ -54,7 +71,7 @@ if __name__ == '__main__':
         else:
             print(f'For AWS Profile {profile}, Account AOS for date {month}/{year} is: {aos}Kb')
     except ZeroDivisionError:
-        error_message = 'Cost explorer API returned 0 for one of the usage types (data transfer or requests), this is most likely because you run the report at the begging of the month, please adjust the dates using --month or --year parameters'
+        error_message = 'Cost explorer API returned 0 for one of the usage types (data transfer or requests), this is most likely because you run the report at the beginning of the month, please adjust the dates using --month or --year parameters'
         if output_format == 'json':
             print(json.dumps({'message': error_message, 'aos': ''}))
         else:
